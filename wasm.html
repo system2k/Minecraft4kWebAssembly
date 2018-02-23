@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html>
+	<meta http-equiv="Content-type" content="text/html;charset=UTF-8">
+	<head>
+		<title>Minecraft.wasm</title>
+		<style>
+			body {
+				background-color: #DDDDDD;
+			}
+			canvas {
+				image-rendering: optimizeSpeed;
+				image-rendering: -moz-crisp-edges;
+				image-rendering: -webkit-optimize-contrast;
+				image-rendering: optimize-contrast;
+				image-rendering: pixelated;
+				image-rendering: -o-crisp-edges;
+				-ms-interpolation-mode: nearest-neighbor;
+			}
+			* {
+				margin: 0;
+				padding: 0;
+				border-collapse: collapse;
+				border-spacing: 0;
+				overflow: hidden;
+			}
+			html, tbody, body {
+				height: 100%;
+			}
+			table {
+				width: 100%;
+				line-height: 0;
+			}
+			tr#c {
+				text-align: center;
+			}
+		</style>
+	</head>
+	<body>
+		<table id = "canvas_holder">
+			<tbody>
+				<tr id="c">
+					<td>
+						<canvas id="game"></canvas>
+					</td>
+				</tr>
+			</tbody>
+		</table>
+		<script>
+			var g_width = 320;
+			var g_height = 240;
+		
+			var game = document.getElementById("game");
+			var ctx = game.getContext("2d")
+			ctx.imageSmoothingEnabled = false;
+			ctx.mozImageSmoothingEnabled = false; // Not needed on newer versions of firefox
+			ctx.webkitImageSmoothingEnabled = false;
+			ctx.msImageSmoothingEnabled = false;
+			ctx.oImageSmoothingEnabled = false;
+			
+			if ("onpointerlockchange" in document) {
+				document.addEventListener("pointerlockchange", lockChangeAlert, false);
+			} else if ("onmozpointerlockchange" in document) {
+				document.addEventListener("mozpointerlockchange", lockChangeAlert, false);
+			}
+			
+			var pointLock = false;
+
+			function lockChangeAlert() {
+				if(document.pointerLockElement === game ||
+				document.mozPointerLockElement === game) {
+					pointLock = true // locked
+				} else {
+					pointLock = false // unlocked
+				}
+			}
+			
+			game.requestPointerLock = game.requestPointerLock || game.mozRequestPointerLock || game.webkitRequestPointerLock // functions to lock the pointer
+	
+			game.onclick = function(e) {
+				if(!pointLock) {
+					if(game.requestPointerLock) game.requestPointerLock() // lock the pointer
+				}
+			}
+			
+			
+			var W = 0;
+			var A = 0;
+			var S = 0;
+			var D = 0;
+			
+			
+			var pixels = ctx.createImageData(320, 240)
+			for(var i = 0; i < 320*240; i++) {
+				var pos = i * 4;
+				pixels.data[pos + 3] = 255;
+			}
+			ctx.putImageData(pixels, 0, 0)
+		
+			var wasmSource = "http://127.0.0.1:8080/demominecraft/program.wasm";
+			
+			var tbl;
+			var mem;
+			var wasm;
+			
+			var request = new XMLHttpRequest();
+			request.open("GET", wasmSource, true);
+			request.overrideMimeType("text\/plain; charset=x-user-defined");
+			request.responseType = "arraybuffer";
+			request.onload = async function() {
+				var asm = new Uint8Array(request.response)
+				
+				var memory = new WebAssembly.Memory({
+					initial: 256,
+					maximum: 256
+				})
+				var table = new WebAssembly.Table({
+					initial: 0,
+					maximum: 0,
+					element: "anyfunc"
+				})
+				
+				var f = await WebAssembly.instantiate(asm, {
+					env: {
+						__Z5printPKc: function(address) {
+							var buffer = "";
+							var idx = address;
+							var chunkSize = 256;
+							while(true) {
+								var segment = new Uint8Array(mem.buffer.slice(idx, idx + chunkSize))
+								var terminate = false;
+								for(var i = 0; i < segment.length; i++) {
+									if(segment[i] == 0) {
+										terminate = true;
+										break;
+									}
+									buffer += String.fromCharCode(segment[i]);
+								}
+								idx += chunkSize;
+								if(terminate) break;
+							}
+							console.log(buffer);
+						},
+						__Z5printi: function(numb) {
+							console.log(numb);
+						},
+						__Z4randv: function() {
+							return Math.floor(Math.random() * 32768)
+						},
+						_cosf: function(x) {
+							return Math.cos(x);
+						},
+						_sinf: function(x) {
+							return Math.sin(x);
+						},
+						__Z4ceilf: function(x) {
+							return Math.ceil(x);
+						},
+						__Z10floatprintf: function(x) {
+							console.log(x);
+						},
+						
+						memoryBase: 0,
+						tableBase: 0,
+						memory: memory,
+						table: table
+					}
+				})
+				
+				wasm = f
+				tbl = f.instance.exports
+				mem = memory;
+				
+				// demangle function names (top level only)
+				
+				functions = {};
+				functions.main = f.instance.exports._main;
+				
+				var ex = f.instance.exports;
+				for(var i in ex) {
+					var label = i;
+					if(label.startsWith("__Z")) {
+						label = label.substr("__Z".length); // remove __Z
+						var number = "";
+						for(var n = 0; n < label.length; n++) {
+							if(!isNaN(parseInt(label.charAt(n)))) {
+								number += label.charAt(n);
+							} else {
+								break;
+							}
+						}
+						// remove number
+						label = label.substr(number.length)
+						// keep name
+						label = label.slice(0, parseInt(number))
+						functions[label] = ex[i];
+					}
+				}
+				
+				console.log(functions.main())
+				
+				var screenPtr = f.instance.exports._screen;
+				
+				console.log(screenPtr)
+				
+				
+				//functions.timer();
+				
+				/*outscreen.onmousedown = function() {
+					f.instance.exports._onMouseDown();
+				}
+				outscreen.onmouseup = function() {
+					f.instance.exports._onMouseUp();
+				}
+				var t = setInterval(function() {
+					f.instance.exports._timer();
+				}, 1)*/
+				
+				if(functions.timer) {
+					var tmr = setInterval(function() {
+						if(functions.movePlayer) {
+							functions.movePlayer(W, A, S, D);
+						}
+						functions.timer();
+					}, 1000 / 30)
+				}
+				
+				setInterval(function() {
+					var RGB = new Uint8Array(memory.buffer.slice(screenPtr, screenPtr + (320 * 240 * 3)));
+					for(var i = 0; i < 320*240; i++) {
+						var posD = i * 4; // destination
+						var posS = i * 3; // source
+						pixels.data[posD + 0] = RGB[posS + 0]; // r
+						pixels.data[posD + 1] = RGB[posS + 1]; // g
+						pixels.data[posD + 2] = RGB[posS + 2]; // b
+						pixels.data[posD + 3] = 255; // a
+					}
+					ctx.putImageData(pixels, 0, 0)
+				}, 1000 / 30)
+			};
+			request.send();
+			
+			function canvasSize() {
+				var clientW = window.innerWidth;
+				var clientH = window.innerHeight;
+				if(clientW <= 256) clientW = 255;
+				if(clientH <= 256) clientH = 255;
+				
+				var wh = g_width, ht = g_height;
+				var screen_width = clientW;
+				var screen_height = clientH;
+				
+				var mn = Math.min(screen_width / g_width, screen_height / g_height);
+					
+				wh = (mn * g_width);
+				ht = (mn * g_height);
+				game.style.width = (Math.trunc(wh)) + "px";
+				game.style.height = (Math.trunc(ht)) + "px";
+			}
+			canvasSize();
+			game.width = g_width;
+			game.height = g_height;
+			onresize = canvasSize;
+		</script>
+	</body>
+</html>
